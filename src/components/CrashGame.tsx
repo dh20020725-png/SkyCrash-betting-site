@@ -13,7 +13,7 @@ import {
 import { bumpNonce, getClientSeed, useLedger, type BetRecord } from "@/lib/ledger";
 import { toast } from "sonner";
 import { RotateCcw, Shield, Sparkles, Play, Hand, Repeat, Trophy, Flame } from "lucide-react";
-import { useSettings, playBeep } from "@/lib/settings";
+import { useSettings, playBeep, getSettings } from "@/lib/settings";
 
 type Phase = "idle" | "committed" | "running" | "crashed";
 
@@ -293,8 +293,11 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
     if (onBalanceChange) onBalanceChange(delta);
     setLastResult(rec);
     
-    // Show result modal
-    setShowResultModal(true);
+    // Show result modal only if enabled in settings
+    const settings = getSettings();
+    if (settings.resultModal) {
+      setShowResultModal(true);
+    }
     
     // Bust toast & phase transition only when the curve actually finishes.
     if (!won) {

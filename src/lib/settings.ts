@@ -5,9 +5,10 @@ const KEY = "demo_settings_v1";
 export type Settings = {
   sound: boolean;
   animations: boolean;
+  resultModal: boolean;
 };
 
-const DEFAULTS: Settings = { sound: true, animations: true };
+const DEFAULTS: Settings = { sound: true, animations: true, resultModal: true };
 
 function read(): Settings {
   if (typeof window === "undefined") return DEFAULTS;

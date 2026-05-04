@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { useSettings, playBeep } from "@/lib/settings";
 import { getClientSeed, rotateClientSeed, useLedger } from "@/lib/ledger";
 import { toast } from "sonner";
-import { Volume2, Sparkles, Shuffle, Trash2 } from "lucide-react";
+import { Volume2, Sparkles, Shuffle, Trash2, Trophy } from "lucide-react";
 
 const SettingsPage = () => {
   const [settings, setSettings] = useSettings();
@@ -45,6 +45,13 @@ const SettingsPage = () => {
             description="Pulsing multiplier, crash flash, button glow."
             checked={settings.animations}
             onChange={(v) => setSettings({ animations: v })}
+          />
+          <Toggle
+            icon={<Trophy className="h-4 w-4 text-accent" />}
+            label="Result animation modal"
+            description="Show win/lose animation modal after each bet."
+            checked={settings.resultModal}
+            onChange={(v) => setSettings({ resultModal: v })}
           />
         </div>
       </Card>
