@@ -96,7 +96,6 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
   const liveBetRef = useRef(0);
   const liveTargetRef = useRef(0);
   const cashedRef = useRef(false);
-  const finalizedRef = useRef(false);
 
   // Pre-committed seed for next round
   const [serverSeed, setServerSeed] = useState<string>("");
@@ -139,104 +138,64 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
   const canBet = phase === "committed" && bet > 0 && bet <= balance && target >= 1.01 && serverSeed && serverSeedHash;
 
   const place = useCallback(async () => {
-    console.log('Place bet clicked:', { phase, bet, balance, target, serverSeed: !!serverSeed, serverSeedHash: !!serverSeedHash, canBet });
-    if (!canBet) {
-      console.log('Cannot place bet - conditions not met');
-      return;
-    }
+    if (!canBet) return;
     
     try {
-      console.log('Starting bet execution...');
       const nonce = bumpNonce();
       const crash = await computeCrashPoint(serverSeed, clientSeed, nonce);
-      console.log('Crash point computed:', crash);
       
-            
-      setCrashAt(crash);
-      setMultiplier(1.0);
-      liveBetRef.current = bet;
-      liveTargetRef.current = target;
-      cashedRef.current = false;
-      finalizedRef.current = false; // Reset finalized flag for new bet
-      setPhase("running");
-      phaseRef.current = "running"; // Update ref immediately
-      startTsRef.current = performance.now();
-      console.log('Game started, phase set to running');
-
-      const tick = (now: number) => {
-        console.log('Animation tick called, phaseRef:', phaseRef.current, 'phase:', phase, 'cashed:', cashedRef.current);
-        // Check if we should still be running - use ref to get current phase
-        if (phaseRef.current !== "running" || cashedRef.current) {
-          console.log('Animation stopped - phaseRef:', phaseRef.current, 'cashed:', cashedRef.current);
-          if (rafRef.current) {
-            cancelAnimationFrame(rafRef.current);
-            rafRef.current = null;
-          }
-          return;
-        }
-        
-        const t = (now - startTsRef.current) / 1000; // seconds
-        const m = Math.max(1, Math.pow(Math.E, 0.18 * t));
-        console.log('Animation progress:', { t, m, crash, target: liveTargetRef.current, mCrash: m >= crash });
-        
-        if (m >= crash) {
-          console.log('Crash condition met:', { m, crash, target: liveTargetRef.current, won: crash > liveTargetRef.current });
-          setMultiplier(crash);
-          // Clean up animation frame
-          if (rafRef.current) {
-            cancelAnimationFrame(rafRef.current);
-            rafRef.current = null;
-          }
-          // If user already manually cashed, finalize was handled then.
-          if (!cashedRef.current) {
-            const won = crash > liveTargetRef.current;
-            console.log('Calling finalize with won:', won);
-            finalize(crash, nonce, liveTargetRef.current, won);
-          }
-          return;
-        }
-        
-        // Throttle updates to reduce DOM manipulation
-        const roundedMultiplier = Math.round(m * 100) / 100;
-        
-        // Only update if multiplier changed significantly to reduce DOM updates
-        if (Math.abs(roundedMultiplier - multiplier) > 0.01) {
-          setMultiplier(roundedMultiplier);
-        }
-        
-        // Auto cash-out at target
-        // if (!cashedRef.current && m >= liveTargetRef.current) {
-        //   cashedRef.current = true;
-        //   // Continue animation until crash, but lock the win now.
-        //   finalize(crash, nonce, liveTargetRef.current, true);
-        //   // For auto cash-out, we should continue animation until crash
-        //   if (phaseRef.current === "running") {
-        //     rafRef.current = requestAnimationFrame(tick);
-        //   }
-        //   return;
-        // }
-
-        if (phaseRef.current === "running") {
-          rafRef.current = requestAnimationFrame(tick);
-        }
+      // Determine win/lose immediately
+      const won = crash > target;
+      const payout = won ? +(bet * target).toFixed(2) : 0;
+      const delta = won ? payout - bet : -bet;
+      
+      // Create bet record
+      const rec: BetRecord = {
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        bet,
+        target,
+        crash,
+        won,
+        payout,
+        cashedOutAt: won ? target : undefined,
+        serverSeed,
+        serverSeedHash,
+        clientSeed,
+        nonce: nonce >= 0 ? nonce : (lastResult?.nonce ?? 0) + 1,
       };
 
-      // Start animation immediately
-      console.log('Starting animation frame...');
-      // Test immediate call to see if tick function works
-      console.log('Testing immediate tick call...');
-      try {
-        tick(performance.now());
-      } catch (error) {
-        console.error('Error in immediate tick call:', error);
+      // Save history and update balance immediately
+      recordBet(rec, delta);
+      if (onBalanceChange) onBalanceChange(delta);
+      setLastResult(rec);
+      
+      // Show result toast
+      if (won) {
+        toast.success(`Won @ ${target.toFixed(2)}×  ·  bust was ${crash.toFixed(2)}×`);
+        playBeep("win");
+      } else {
+        toast.error(`Bust @ ${crash.toFixed(2)}×`);
+        playBeep("lose");
       }
-      rafRef.current = requestAnimationFrame(tick);
-      console.log('Animation frame requested:', rafRef.current);
+
+      
+      
+      // Animate the result
+      setCrashAt(crash);
+      setMultiplier(crash);
+      setPhase("crashed");
+      
+      // Reset for next bet after delay
+      setTimeout(() => {
+        setPhase("committed");
+      }, 2000);
+      
     } catch (error) {
       console.error('Error placing bet:', error);
       toast.error('Failed to place bet');
     }
-  }, [canBet, bet, target, serverSeed, clientSeed, multiplier]);
+  }, [canBet, bet, target, serverSeed, clientSeed, onBalanceChange, recordBet, setLastResult]);
 
   const cashOutNow = useCallback(() => {
     if (phase !== "running" || cashedRef.current) return;
@@ -255,14 +214,7 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
     cashedAt: number,
     won: boolean
   ) => {
-    // Prevent duplicate finalize calls
-    if (finalizedRef.current) {
-      console.log('Finalize already called - skipping duplicate');
-      return;
-    }
-    
     console.log('Finalize called:', { crash, nonce, cashedAt, won, liveBet: liveBetRef.current, liveTarget: liveTargetRef.current });
-    
     const lockedBet = liveBetRef.current;
     const lockedTarget = liveTargetRef.current;
     const payout = won ? +(lockedBet * lockedTarget).toFixed(2) : 0;
@@ -283,15 +235,12 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
       nonce: nonce >= 0 ? nonce : (lastResult?.nonce ?? 0) + 1,
     };
 
-    // Mark as finalized to prevent duplicates
-    finalizedRef.current = true;
-
-    // Save history and update balance when animation stops
-    console.log('Saving history and updating balance when animation stopped');
+    console.log('Recording bet:', rec, 'delta:', delta);
     recordBet(rec, delta);
+    console.log('After recordBet, history length:', history.length);
     if (onBalanceChange) onBalanceChange(delta);
     setLastResult(rec);
-    
+
     // Bust toast & phase transition only when the curve actually finishes.
     if (!won) {
       toast.error(`Bust @ ${crash.toFixed(2)}×`);
@@ -322,29 +271,12 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
     }
   }, [multiplier, crashAt, phase]);
 
-  // Ensure finalize is called when phase changes to crashed (safety mechanism)
-  useEffect(() => {
-    if (phase === "crashed" && crashAt && !cashedRef.current && !finalizedRef.current) {
-      // Check if we've already finalized this round
-      const lastBetId = lastResult?.id;
-      const currentBetId = `${crashAt}-${liveBetRef.current}-${liveTargetRef.current}`;
-      
-      if (lastBetId !== currentBetId) {
-        console.log('Phase changed to crashed - ensuring finalize is called');
-        const won = crashAt > liveTargetRef.current;
-        finalize(crashAt, -1, liveTargetRef.current, won);
-      }
-    }
-  }, [phase, crashAt, lastResult, finalize]);
-
-  // Safety timeout to prevent game from getting stuck and ensure finalize is called
+  
+  // Safety timeout to prevent game from getting stuck
   useEffect(() => {
     if (phase === "running" && crashAt) {
       const timeout = setTimeout(() => {
-        if (phaseRef.current === "running" && !finalizedRef.current) {
-          console.log('Safety timeout reached - forcing finalize');
-          const won = crashAt > liveTargetRef.current;
-          finalize(crashAt, -1, liveTargetRef.current, won);
+        if (phaseRef.current === "running") {
           setPhase("crashed");
           if (rafRef.current) {
             cancelAnimationFrame(rafRef.current);
@@ -354,7 +286,7 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
       }, 30000); // 30 second timeout
       return () => clearTimeout(timeout);
     }
-  }, [phase, crashAt, finalize]);
+  }, [phase, crashAt]);
 
   // Aggressive cleanup on phase changes
   useEffect(() => {
@@ -426,7 +358,6 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
                   <stop offset="100%" stopColor="hsl(var(--accent))" stopOpacity="0" />
                 </linearGradient>
               </defs>
-              {/* Grid lines */}
               {[1, 2, 3, 4].map((i) => (
                 <line
                   key={i}
@@ -438,21 +369,6 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
                   strokeDasharray="4 6"
                   opacity="0.4"
                 />
-              ))}
-              {/* Axis lines */}
-              <line x1="0" x2="600" y1="320" y2="320" stroke="hsl(var(--border))" strokeWidth="2" />
-              <line x1="0" x2="0" y1="0" y2="320" stroke="hsl(var(--border))" strokeWidth="2" />
-              {/* X-axis labels */}
-              {[0, 1, 2, 3, 4, 5].map((i) => (
-                <text key={i} x={i * 100} y="335" fill="hsl(var(--muted-foreground))" fontSize="10" textAnchor="middle">
-                  {i * 2}x
-                </text>
-              ))}
-              {/* Y-axis labels */}
-              {[1, 2, 3, 4].map((i) => (
-                <text key={i} x="-10" y={320 - i * 64} fill="hsl(var(--muted-foreground))" fontSize="10" textAnchor="end">
-                  {i}x
-                </text>
               ))}
               {/* Build proper rising curve */}
               {(() => {
@@ -497,13 +413,13 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
 
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
               <div
-                className={`font-mono-num text-7xl font-bold tabular-nums md:text-8xl transition-all duration-300 ${
+                className={`font-mono-num text-7xl font-bold tabular-nums md:text-8xl ${
                   phase === "running"
                     ? cashedRef.current
-                      ? "text-primary scale-110"
-                      : "text-accent animate-pulse scale-105"
+                      ? "text-primary"
+                      : "text-accent"
                     : phase === "crashed" && lastResult && !lastResult.won
-                    ? "text-destructive scale-95"
+                    ? "text-destructive"
                     : "text-foreground"
                 }`}
               >
@@ -609,11 +525,11 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
               onClick={cashOutNow}
               disabled={cashedRef.current}
               size="lg"
-              className="w-full bg-gradient-accent text-accent-foreground transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl"
+              className="w-full bg-gradient-accent text-accent-foreground"
             >
-              <Hand className="mr-2 h-5 w-5 animate-pulse" />
+              <Hand className="mr-2 h-5 w-5" />
               {cashedRef.current
-                ? `Locked +${liveProfit}` 
+                ? `Locked +${liveProfit}`
                 : `Cash out @ ${multiplier.toFixed(2)}× (+${liveProfit})`}
             </Button>
           ) : (
@@ -621,11 +537,9 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
               onClick={place}
               disabled={!canBet}
               size="lg"
-              className={`w-full bg-gradient-primary text-primary-foreground transition-all duration-300 transform hover:scale-105 active:scale-95 ${
-                canBet ? "shadow-lg hover:shadow-xl" : "opacity-50 cursor-not-allowed"
-              }`}
+              className="w-full bg-gradient-primary text-primary-foreground"
             >
-              <Play className={`mr-2 h-5 w-5 ${canBet ? "animate-bounce" : ""}`} />
+              <Play className="mr-2 h-5 w-5" />
               Place bet
             </Button>
           )}
@@ -642,17 +556,14 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
             <div className="py-4 text-center text-sm text-muted-foreground">No bets yet — place your first one above.</div>
           ) : (
             <div className="grid grid-cols-3 gap-1.5">
-              {history.slice(0, 15).map((h, index) => (
+              {history.slice(0, 15).map((h) => (
                 <div
                   key={h.id}
-                  className={`rounded border px-1.5 py-1 text-center font-mono-num text-[10px] leading-tight transition-all duration-300 transform hover:scale-110 ${
+                  className={`rounded border px-1.5 py-1 text-center font-mono-num text-[10px] leading-tight ${
                     h.won
-                      ? "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 hover:shadow-lg"
-                      : "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 hover:shadow-lg"
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-destructive/40 bg-destructive/10 text-destructive"
                   }`}
-                  style={{
-                    animation: index === 0 ? 'slideIn 0.3s ease-out' : undefined
-                  }}
                   title={`bet ${h.bet} @ ${h.target}× → crash ${h.crash}×${h.won ? ` · cashed ${h.cashedOutAt?.toFixed(2)}×` : ""}`}
                 >
                   {h.crash.toFixed(2)}×
