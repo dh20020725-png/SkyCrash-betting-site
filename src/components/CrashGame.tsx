@@ -91,8 +91,6 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
   const [multiplier, setMultiplier] = useState(1.0);
   const [crashAt, setCrashAt] = useState<number | null>(null);
   const [lastResult, setLastResult] = useState<BetRecord | null>(null);
-  const [autoBet, setAutoBet] = useState(false);
-  const [countdown, setCountdown] = useState(0);
 
   // Round-active bet snapshot (so changing inputs mid-flight doesn't affect payout)
   const liveBetRef = useRef(0);
@@ -106,7 +104,6 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
 
   const rafRef = useRef<number | null>(null);
   const startTsRef = useRef<number>(0);
-  const countdownRef = useRef<number | null>(null);
   const phaseRef = useRef<Phase>(phase);
 
   // Commit a fresh server seed on mount and after every round.
@@ -272,42 +269,7 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
     }
   }, [multiplier, crashAt, phase]);
 
-  // Auto-bet: countdown then re-place.
-  useEffect(() => {
-    if (phase === "crashed" && autoBet && bet > 0 && bet <= balance) {
-      setCountdown(COUNTDOWN_MS / 1000);
-      
-      const start = performance.now();
-      const cd = () => {
-        const elapsed = performance.now() - start;
-        const remaining = Math.max(0, COUNTDOWN_MS - elapsed);
-        setCountdown(Math.ceil(remaining / 1000));
-        
-        if (remaining > 0) {
-          countdownRef.current = requestAnimationFrame(cd);
-        } else {
-          setCountdown(0);
-          place();
-        }
-      };
-      
-      countdownRef.current = requestAnimationFrame(cd);
-    } else {
-      setCountdown(0);
-      if (countdownRef.current) {
-        cancelAnimationFrame(countdownRef.current);
-        countdownRef.current = null;
-      }
-    }
-
-    return () => {
-      if (countdownRef.current) {
-        cancelAnimationFrame(countdownRef.current);
-        countdownRef.current = null;
-      }
-    };
-  }, [phase, autoBet, bet, balance, place]);
-
+  
   // Safety timeout to prevent game from getting stuck
   useEffect(() => {
     if (phase === "running" && crashAt) {
@@ -332,10 +294,6 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-      if (countdownRef.current) {
-        cancelAnimationFrame(countdownRef.current);
-        countdownRef.current = null;
-      }
     };
   }, []);
 
@@ -345,10 +303,6 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
-    }
-    if (countdownRef.current) {
-      cancelAnimationFrame(countdownRef.current);
-      countdownRef.current = null;
     }
   }, [phase]);
 
@@ -588,13 +542,7 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
             </Button>
           )}
 
-          <div className="flex items-center justify-between rounded-md border border-border/60 bg-secondary/40 px-3 py-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Repeat className="h-3.5 w-3.5" /> Auto re-bet
-            </div>
-            <Switch checked={autoBet} onCheckedChange={setAutoBet} />
-          </div>
-        </Card>
+                  </Card>
 
         {/* Recent Rounds */}
         <Card className="border-border/60 bg-card/60 p-5 shadow-card backdrop-blur">
