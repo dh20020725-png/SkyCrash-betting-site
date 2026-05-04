@@ -141,98 +141,62 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
   const canBet = phase === "committed" && bet > 0 && bet <= balance && target >= 1.01 && serverSeed && serverSeedHash;
 
   const place = useCallback(async () => {
-    console.log('Place bet clicked:', { phase, bet, balance, target, serverSeed: !!serverSeed, serverSeedHash: !!serverSeedHash, canBet });
-    if (!canBet) {
-      console.log('Cannot place bet - conditions not met');
-      return;
-    }
+    if (!canBet) return;
     
     try {
-      console.log('Starting bet execution...');
       const nonce = bumpNonce();
       const crash = await computeCrashPoint(serverSeed, clientSeed, nonce);
-      console.log('Crash point computed:', crash);
       
-      setCrashAt(crash);
-      setMultiplier(1.0);
-      liveBetRef.current = bet;
-      liveTargetRef.current = target;
-      cashedRef.current = false;
-      setPhase("running");
-      phaseRef.current = "running"; // Update ref immediately
-      startTsRef.current = performance.now();
-      console.log('Game started, phase set to running');
-
-      const tick = (now: number) => {
-        console.log('Animation tick called, phaseRef:', phaseRef.current, 'phase:', phase, 'cashed:', cashedRef.current);
-        // Check if we should still be running - use ref to get current phase
-        if (phaseRef.current !== "running" || cashedRef.current) {
-          console.log('Animation stopped - phaseRef:', phaseRef.current, 'cashed:', cashedRef.current);
-          if (rafRef.current) {
-            cancelAnimationFrame(rafRef.current);
-            rafRef.current = null;
-          }
-          return;
-        }
-        
-        const t = (now - startTsRef.current) / 1000; // seconds
-        const m = Math.max(1, Math.pow(Math.E, 0.18 * t));
-        
-        if (m >= crash) {
-          setMultiplier(crash);
-          // Clean up animation frame
-          if (rafRef.current) {
-            cancelAnimationFrame(rafRef.current);
-            rafRef.current = null;
-          }
-          // If user already manually cashed, finalize was handled then.
-          if (!cashedRef.current) {
-            finalize(crash, nonce, liveTargetRef.current, false);
-          }
-          return;
-        }
-        
-        // Throttle updates to reduce DOM manipulation
-        const roundedMultiplier = Math.round(m * 100) / 100;
-        
-        // Only update if multiplier changed significantly to reduce DOM updates
-        if (Math.abs(roundedMultiplier - multiplier) > 0.01) {
-          setMultiplier(roundedMultiplier);
-        }
-        
-        // Auto cash-out at target
-        // if (!cashedRef.current && m >= liveTargetRef.current) {
-        //   cashedRef.current = true;
-        //   // Continue animation until crash, but lock the win now.
-        //   finalize(crash, nonce, liveTargetRef.current, true);
-        //   // For auto cash-out, we should continue animation until crash
-        //   if (phaseRef.current === "running") {
-        //     rafRef.current = requestAnimationFrame(tick);
-        //   }
-        //   return;
-        // }
-
-        if (phaseRef.current === "running") {
-          rafRef.current = requestAnimationFrame(tick);
-        }
+      // Determine win/lose immediately
+      const won = crash > target;
+      const payout = won ? +(bet * target).toFixed(2) : 0;
+      const delta = won ? payout - bet : -bet;
+      
+      // Create bet record
+      const rec: BetRecord = {
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        bet,
+        target,
+        crash,
+        won,
+        payout,
+        cashedOutAt: won ? target : undefined,
+        serverSeed,
+        serverSeedHash,
+        clientSeed,
+        nonce: nonce >= 0 ? nonce : (lastResult?.nonce ?? 0) + 1,
       };
 
-      // Start animation immediately
-      console.log('Starting animation frame...');
-      // Test immediate call to see if tick function works
-      console.log('Testing immediate tick call...');
-      try {
-        tick(performance.now());
-      } catch (error) {
-        console.error('Error in immediate tick call:', error);
+      // Save history and update balance immediately
+      recordBet(rec, delta);
+      if (onBalanceChange) onBalanceChange(delta);
+      setLastResult(rec);
+      
+      // Show result toast
+      if (won) {
+        toast.success(`Won @ ${target.toFixed(2)}×  ·  bust was ${crash.toFixed(2)}×`);
+        playBeep("win");
+      } else {
+        toast.error(`Bust @ ${crash.toFixed(2)}×`);
+        playBeep("lose");
       }
-      rafRef.current = requestAnimationFrame(tick);
-      console.log('Animation frame requested:', rafRef.current);
+      
+      // Animate the result
+      setCrashAt(crash);
+      setMultiplier(crash);
+      setPhase("crashed");
+      
+      // Reset for next bet after delay
+      setTimeout(() => {
+        setPhase("committed");
+      }, 2000);
+      
     } catch (error) {
       console.error('Error placing bet:', error);
       toast.error('Failed to place bet');
     }
-  }, [canBet, bet, target, serverSeed, clientSeed, multiplier]);
+  }, [canBet, bet, target, serverSeed, clientSeed, onBalanceChange, recordBet, setLastResult]);
 
   const cashOutNow = useCallback(() => {
     if (phase !== "running" || cashedRef.current) return;
@@ -251,8 +215,10 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
     cashedAt: number,
     won: boolean
   ) => {
+    console.log('Finalize called:', { crash, nonce, cashedAt, won, liveBet: liveBetRef.current, liveTarget: liveTargetRef.current });
     const lockedBet = liveBetRef.current;
-    const payout = won ? +(lockedBet * cashedAt).toFixed(2) : 0;
+    const lockedTarget = liveTargetRef.current;
+    const payout = won ? +(lockedBet * lockedTarget).toFixed(2) : 0;
     const delta = won ? payout - lockedBet : -lockedBet;
     
     const rec: BetRecord = {
@@ -263,14 +229,16 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
       crash,
       won,
       payout,
-      cashedOutAt: won ? cashedAt : undefined,
+      cashedOutAt: won ? lockedTarget : undefined,
       serverSeed,
       serverSeedHash,
       clientSeed,
       nonce: nonce >= 0 ? nonce : (lastResult?.nonce ?? 0) + 1,
     };
 
+    console.log('Recording bet:', rec, 'delta:', delta);
     recordBet(rec, delta);
+    console.log('After recordBet, history length:', history.length);
     if (onBalanceChange) onBalanceChange(delta);
     setLastResult(rec);
 
@@ -633,7 +601,7 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
           <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
             <Trophy className="h-3.5 w-3.5 text-accent" /> Recent rounds
           </div>
-          <div className="mb-2 text-xs text-muted-foreground">{stats.total} played</div>
+          <div className="mb-2 text-xs text-muted-foreground">{stats.total} played - History length: {history.length}</div>
           {history.length === 0 ? (
             <div className="py-4 text-center text-sm text-muted-foreground">No bets yet — place your first one above.</div>
           ) : (
