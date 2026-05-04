@@ -91,6 +91,7 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
   const [multiplier, setMultiplier] = useState(1.0);
   const [crashAt, setCrashAt] = useState<number | null>(null);
   const [lastResult, setLastResult] = useState<BetRecord | null>(null);
+  const [showResultModal, setShowResultModal] = useState(false);
 
   // Round-active bet snapshot (so changing inputs mid-flight doesn't affect payout)
   const liveBetRef = useRef(0);
@@ -291,6 +292,9 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
     recordBet(rec, delta);
     if (onBalanceChange) onBalanceChange(delta);
     setLastResult(rec);
+    
+    // Show result modal
+    setShowResultModal(true);
     
     // Bust toast & phase transition only when the curve actually finishes.
     if (!won) {
@@ -682,6 +686,79 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
           </div>
         </Card>
       </div>
+    {/* Win/Lose Result Modal */}
+      {showResultModal && lastResult && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setShowResultModal(false)}
+        >
+          <div 
+            className="relative mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className={`relative bg-card/90 backdrop-blur-md rounded-2xl p-8 shadow-2xl border border-border/50 ${
+                lastResult.won 
+                  ? 'animate-modal-win' 
+                  : 'animate-modal-lose'
+              }`}
+              style={{
+                animation: lastResult.won 
+                  ? 'modalFadeInBounce 0.6s ease-out forwards'
+                  : 'modalFadeInShake 0.6s ease-out forwards',
+                boxShadow: lastResult.won 
+                  ? '0 0 60px rgba(34, 197, 94, 0.6), 0 0 120px rgba(34, 197, 94, 0.3)'
+                  : '0 0 60px rgba(239, 68, 68, 0.6), 0 0 120px rgba(239, 68, 68, 0.3)',
+                borderColor: lastResult.won 
+                  ? 'rgba(34, 197, 94, 0.5)'
+                  : 'rgba(239, 68, 68, 0.5)'
+              }}
+            >
+              {/* Close button */}
+              <button
+                onClick={() => setShowResultModal(false)}
+                className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Result Image - Much Larger */}
+              <div className="flex justify-center mb-8">
+                <div className="relative">
+                  <img
+                    src={lastResult.won ? "/win.png" : "/lose.png"}
+                    alt={lastResult.won ? "Win" : "Lose"}
+                    className={`h-64 w-64 md:h-80 md:w-80 lg:h-[28rem] lg:w-[28rem] object-contain`}
+                  />
+                </div>
+              </div>
+
+              {/* Result Text - Simplified */}
+              <div className="text-center">
+                <h3 className={`text-4xl font-bold mb-6 ${
+                  lastResult.won ? 'text-primary' : 'text-destructive'
+                }`}>
+                  {lastResult.won ? 'You Won!' : 'You Lost!'}
+                </h3>
+              </div>
+
+              {/* Action Button */}
+              <button
+                onClick={() => setShowResultModal(false)}
+                className={`w-full mt-8 py-4 px-6 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 ${
+                  lastResult.won
+                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                    : 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                }`}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
