@@ -1,13 +1,13 @@
 import { CrashGame } from "@/components/CrashGame";
-import { useState } from "react";
 import { useAuth } from "@/lib/auth";
 
 const Play = () => {
   const { user } = useAuth();
-  const [localBalance, setLocalBalance] = useState<number>(user?.balance || 0);
-
+  
+  // Use user's actual balance from database, not local state
   const handleBalanceUpdate = (amount: number) => {
-    setLocalBalance(prev => Math.max(0, prev + amount));
+    // Balance updates are handled by the ledger system
+    console.log('Balance update:', amount);
   };
 
   return (
@@ -23,7 +23,7 @@ const Play = () => {
       </div>
       
       <div className="space-y-4">
-        <CrashGame balance={localBalance} onBalanceChange={handleBalanceUpdate} />
+        <CrashGame balance={user?.balance || 0} onBalanceChange={handleBalanceUpdate} />
         <p className="text-center text-xs text-muted-foreground">
           Verify any round: SHA256(serverSeed) must equal the published hash, then
           HMAC-SHA256(serverSeed, "<code>clientSeed:nonce</code>") deterministically produces the crash point.

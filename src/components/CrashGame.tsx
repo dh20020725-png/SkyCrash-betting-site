@@ -281,7 +281,8 @@ const CrashGameComponent = ({ balance: externalBalance, onBalanceChange }: Crash
       serverSeed,
       serverSeedHash,
       clientSeed,
-      nonce: nonce >= 0 ? nonce : (lastResult?.nonce ?? 0) + 1,
+      nonce: -1,
+      type: 'bet' as const
     };
 
     // Mark as finalized to prevent duplicates
